@@ -16,7 +16,7 @@
 - **自动播放** — 进入视频页自动开始播放，无需手动点击
 - **自动静音** — 播放时自动将网页静音，润物细无声
 - **自动连播** — 当前视频播放完毕后自动切换到下一个课程
-- **倍速设置** — 支持自定义播放速度（首次默认 5x，后续记忆用户设置）
+- **❌倍速设置** — 支持自定义播放速度（不支持）
 - **疲劳检测屏蔽** — 自动关闭播放过程中弹出的"温馨提示""疲劳提醒"等对话框
 - **双播放器兼容** — 同时支持保利威（Polyv）和 CC 播放器
 
@@ -46,15 +46,7 @@
 
 ## 📦 安装方式
 
-### 方式一：Greasy Fork 在线安装（推荐）
-
-1. 安装 Tampermonkey 浏览器扩展：
-   - [Chrome / Edge](https://chrome.google.com/webstore/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)
-   - [Firefox](https://addons.mozilla.org/firefox/addon/tampermonkey/)
-2. 前往 [Greasy Fork 安装页](https://greasyfork.org/scripts/483418) 点击安装
-3. 脚本将自动检查更新
-
-### 方式二：手动安装
+### 手动安装
 
 1. 安装 Tampermonkey 浏览器扩展（同上）
 2. 下载 `华医网小助手2.0.0.user.js` 文件
@@ -150,10 +142,6 @@
 
 ## 🔗 相关链接
 
-- [Greasy Fork 脚本页面](https://greasyfork.org/scripts/483418)
-- [华医网官网](https://www.91huayi.com)
 - [Tampermonkey 官网](https://www.tampermonkey.net/)
 
 ---
-
-> 💡 **提示**：如遇到脚本失效或页面不适配，请在 [Greasy Fork 反馈区](https://greasyfork.org/scripts/483418/feedback) 留言，附上页面 URL 和问题截图。
