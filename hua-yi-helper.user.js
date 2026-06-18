@@ -10,9 +10,9 @@
 // @match        *://*.91huayi.com/pages/exam_result.aspx?*
 // @match        *://*.91huayi.com/*
 // @grant        none
-// @run-at      document-start
-// @downloadURL https://raw.githubusercontent.com/miiky-nerm/hua-yi-helper/main/hua-yi-helper.user.js
-// @updateURL https://raw.githubusercontent.com/miiky-nerm/hua-yi-helper/main/hua-yi-helper.user.js
+// @run-at       document-start
+// @downloadURL  https://raw.githubusercontent.com/miiky-nerm/hua-yi-helper/main/hua-yi-helper.user.js
+// @updateURL    https://raw.githubusercontent.com/miiky-nerm/hua-yi-helper/main/hua-yi-helper.user.js
 // ==/UserScript==
 
 var newupdate = "2026.6.10 新增暂停刷新跳转功能：视频暂停后等3秒刷新页面，若状态为已完成/待考试则自动搜索下一未学习/学习中课程继续学习。";
