@@ -1,8 +1,7 @@
 ﻿// ==UserScript==
 // @name         🥇【华医网小助手】全网唯一真实免费|无人值守|自动静音|视频助手|考试助手|不疲劳
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
-// @description  ❌倍速播放✅视频助手✅屏蔽或者跳过课堂签到、提醒、疲劳✅考试助手（试错算法仅面向可多次提交的考试）✅双模选择：单刷视频or视频+考试。
+// @version      2.0.2
 // @author       三创作者：Mriio   二创作者：境界程序员   原创作者：Dr.S
 // @license      AGPL License
 // @match        *://*.91huayi.com/course_ware/course_ware_polyv.aspx?*
@@ -12,12 +11,13 @@
 // @match        *://*.91huayi.com/*
 // @grant        none
 // @run-at      document-start
-// @downloadURL https://raw.githubusercontent.com/miiky-nerm/hua-yi-helper/main/%E5%8D%8E%E5%8C%BB%E7%BD%91%E5%B0%8F%E5%8A%A9%E6%89%8B2.0.0.user.js
-// @updateURL https://raw.githubusercontent.com/miiky-nerm/hua-yi-helper/main/%E5%8D%8E%E5%8C%BB%E7%BD%91%E5%B0%8F%E5%8A%A9%E6%89%8B2.0.0.user.js
+// @downloadURL https://raw.githubusercontent.com/miiky-nerm/hua-yi-helper/main/hua-yi-helper.user.js
+// @updateURL https://raw.githubusercontent.com/miiky-nerm/hua-yi-helper/main/hua-yi-helper.user.js
 // ==/UserScript==
 
-var newupdate = "2026.6.9 新增课程列表页自动扫描未学习/播放至x%/学习中课程功能，进入课程列表页即自动开始学习。";
+var newupdate = "2026.6.10 新增暂停刷新跳转功能：视频暂停后等3秒刷新页面，若状态为已完成/待考试则自动搜索下一未学习/学习中课程继续学习。";
 //更新历史
+//■2026.6.10 新增暂停刷新跳转功能：视频暂停后等3秒刷新页面，若状态为已完成/待考试则自动搜索下一未学习/学习中课程
 //■2026.6.9 新增课程列表页自动扫描功能：在课程列表页(course.aspx/cme.aspx)自动识别"未学习"、"播放至：x%"、"学习中"的课程，按优先级依次点击进入学习，实现从课程列表无人值守自动刷课。
 //■2025.6.13 原作者跑路啦，无奈只能我接手更新了，对作者代码还不熟，将就着先用吧。修复了视频自动跳转下一个的问题。
 //■2024.8.1网页布局和提示窗改版，调整检测逻辑；既然禁用倍速，不再显示变速按钮；得学分更快的双卫网小助手考试功能已开发完毕，正在优化缩短视频时间，完善后发布，欢迎天使投资人
@@ -47,17 +47,43 @@ var newupdate = "2026.6.9 新增课程列表页自动扫描未学习/播放至x%
 // 必须在页面脚本注册click监听器之前拦截
 // ═══════════════════════════════════════════
 (function () {
+    // 【核心修复】最早时机：在页面任何脚本执行前，立即将 blockAbnormalPlugin 覆盖为空函数
+    // 这是最关键的一步，必须在页面定义/调用它之前完成
+    try {
+        window.blockAbnormalPlugin = function() {};
+        console.log('【华医网小助手】已抢先覆盖 blockAbnormalPlugin');
+    } catch(e) {}
+
+    // 【核心修复】拦截 Object.defineProperty，防止页面用不可配置方式重新定义 blockAbnormalPlugin
+    var _origDefineProperty = Object.defineProperty;
+    Object.defineProperty = function(obj, prop, descriptor) {
+        if (obj === window && prop === 'blockAbnormalPlugin') {
+            console.log('【华医网小助手】已拦截 blockAbnormalPlugin 的 Object.defineProperty 重定义');
+            return window;
+        }
+        return _origDefineProperty.apply(this, arguments);
+    };
+
+    // 拦截 addEventListener：扩大拦截范围，所有在 document 上检查 isTrusted 的 click 监听器一律拦截
     var _origAddEventListener = EventTarget.prototype.addEventListener;
     EventTarget.prototype.addEventListener = function (type, listener, options) {
+        // 拦截 contextmenu 事件监听，防止考试页面禁用右键
+        if (type === 'contextmenu') {
+            console.log('【华医网小助手】已拦截右键屏蔽监听器');
+            return;
+        }
         if (this === document && type === 'click') {
             var listenerStr = String(listener);
-            if (listenerStr.indexOf('isTrusted') !== -1 && listenerStr.indexOf('blockAbnormalPlugin') !== -1) {
+            // 扩大拦截：只要是检查 isTrusted 的 click 监听器都拦截（不限于 blockAbnormalPlugin）
+            if (listenerStr.indexOf('isTrusted') !== -1) {
                 console.log('【华医网小助手】已拦截反脚本点击检测监听器');
                 return;
             }
         }
         return _origAddEventListener.call(this, type, listener, options);
     };
+
+    // 拦截 setInterval：阻止倍速检测定时器
     var _origSetInterval = window.setInterval;
     window.setInterval = function (callback, delay) {
         var cbStr = String(callback);
@@ -67,15 +93,67 @@ var newupdate = "2026.6.9 新增课程列表页自动扫描未学习/播放至x%
         }
         return _origSetInterval.apply(this, arguments);
     };
+
+    // 【新增】拦截 setTimeout：同样可能有反脚本检测延时器
+    var _origSetTimeout = window.setTimeout;
+    window.setTimeout = function (callback, delay) {
+        var cbStr = String(callback);
+        if (cbStr.indexOf('blockAbnormalPlugin') !== -1) {
+            console.log('【华医网小助手】已拦截反脚本 setTimeout');
+            return 0;
+        }
+        return _origSetTimeout.apply(this, arguments);
+    };
+
+    // Body 出现时立即清除页面限制（比 DOMContentLoaded 更早）
+    if (typeof MutationObserver !== 'undefined') {
+        var _bodyObserver = new MutationObserver(function(mutations, obs) {
+            if (document.body) {
+                obs.disconnect();
+                try {
+                    document.body.removeAttribute('oncontextmenu');
+                    document.body.removeAttribute('oncopy');
+                    document.body.removeAttribute('onbeforecopy');
+                    document.body.removeAttribute('onhelp');
+                    document.body.oncontextmenu = null;
+                    document.body.oncopy = null;
+                    document.body.onbeforecopy = null;
+                    document.body.onhelp = null;
+                    document.oncontextmenu = null;
+                } catch(e) {}
+            }
+        });
+        _bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
+    }
 })();
 
 // Wait for DOM ready since @run-at document-start
 document.addEventListener('DOMContentLoaded', function () {
 (function () {
     'use strict';
-    var submitTime = 6100;//交卷时间控制
+
+    // 清除页面内联的右键/复制/帮助限制（考试页面会设置这些属性）
+    (function cleanupBodyRestrictions() {
+        try {
+            var body = document.body;
+            if (!body) return;
+            body.removeAttribute('oncontextmenu');
+            body.removeAttribute('oncopy');
+            body.removeAttribute('onbeforecopy');
+            body.removeAttribute('onhelp');
+            body.oncontextmenu = null;
+            body.oncopy = null;
+            body.onbeforecopy = null;
+            body.onhelp = null;
+            // 同时移除 document 级别的右键限制
+            document.oncontextmenu = null;
+            console.log('【华医网小助手】已清除页面右键/复制限制');
+        } catch(e) {}
+    })();
+
+    var submitTime = 4900;//交卷时间控制
     var reTryTime = 2100;//重考,视频进入考试延时控制
-    var examTime = 10000;//听课完成进入考试延时
+    var examTime = 5000;//听课完成进入考试延时
     var randomX = 5000;//随机延时上限
     var vSpeed = 1; //首次使用脚本的默认播放速度
     var autoSkip = false; //一个可能会封号的功能。
@@ -112,7 +190,36 @@ document.addEventListener('DOMContentLoaded', function () {
         huayi.seeVideo(2);
     } else if (urlTip == "exam.aspx") { //考试页面
         console.log("当前任务: 华医考试");
-        huayi.doTest();
+        // 再次确保清理 body 限制
+        (function() {
+            try {
+                var body = document.body;
+                if (body) {
+                    body.removeAttribute('oncontextmenu');
+                    body.removeAttribute('oncopy');
+                    body.removeAttribute('onbeforecopy');
+                    body.removeAttribute('onhelp');
+                    body.oncontextmenu = null;
+                }
+                document.oncontextmenu = null;
+            } catch(e) {}
+        })();
+        // 如果 DOMContentLoaded 阶段题目还未加载，轮询等待
+        var examRetry = 0;
+        function tryDoTest() {
+            var questions = document.querySelectorAll("table.tablestyle");
+            if (questions.length > 0) {
+                console.log("【华医网小助手】考试题目已加载，开始答题");
+                huayi.doTest();
+            } else if (examRetry < 30) {
+                examRetry++;
+                setTimeout(tryDoTest, 500);
+            } else {
+                console.log("【华医网小助手】考试题目加载超时，强制尝试");
+                huayi.doTest();
+            }
+        }
+        tryDoTest();
     } else if (urlTip == "course.aspx" || urlTip == "cme.aspx") { //课程列表页面
         console.log("当前任务: 课程列表");
         huayi.courseList();
@@ -143,6 +250,21 @@ document.addEventListener('DOMContentLoaded', function () {
                 console.log("【华医网小助手】blockAbnormalPlugin 已覆盖为空函数");
             }
         } catch(e) {}
+        // 清除 body 上的右键/复制/帮助限制（考试页面 via 内联属性）
+        try {
+            var body = document.body;
+            if (body) {
+                body.removeAttribute('oncontextmenu');
+                body.removeAttribute('oncopy');
+                body.removeAttribute('onbeforecopy');
+                body.removeAttribute('onhelp');
+                body.oncontextmenu = null;
+                body.oncopy = null;
+                body.onbeforecopy = null;
+                body.onhelp = null;
+            }
+            document.oncontextmenu = null;
+        } catch(e) {}
     }
 
     function getHuayi() {
@@ -164,6 +286,59 @@ document.addEventListener('DOMContentLoaded', function () {
                 var playRateNow = tr ? parseFloat(tr) : vSpeed;
                 cleanKeyStorage();
 
+
+                // 【新增】刷新后检查：如果由暂停刷新触发，扫描侧边栏状态，已完成/待考试则跳转下一课程
+                (function() {
+                    var skipDone = sessionStorage.getItem("hua_yi_post_refresh");
+                    if (skipDone) {
+                        sessionStorage.removeItem("hua_yi_post_refresh");
+                        // 立即阻止检测循环再次触发刷新，防止死循环
+                        courseFinished = true;
+                        navCooldownUntil = Date.now() + 60000;
+                        console.log("【华医网小助手】刷新后检测到标记，检查当前课程状态...");
+                        setTimeout(function() {
+                            try {
+                                var state = getCurrentCourseState();
+                                if (state) {
+                                    console.log("【华医网小助手】刷新后课程状态: " + state);
+                                    if (state == "已完成" || state == "待考试") {
+                                        console.log("【华医网小助手】确认课程已" + state + "，搜索下一个未学习/学习中课程...");
+                                        var lis = document.querySelectorAll("li.lis-inside-content");
+                                        var found = false;
+                                        for (var i = 0; i < lis.length; i++) {
+                                            var status = getCourseStatus(lis[i]);
+                                            if (status === "未学习" || status === "学习中") {
+                                                console.log("【华医网小助手】找到课程（" + status + "），开始学习");
+                                                var targetLi = lis[i];
+                                                var navigated = false;
+                                                var onclickAttr = targetLi.getAttribute("onclick") || "";
+                                                var urlMatch = onclickAttr.match(/location\.href=["\u0027]([^"\u0027]+)["\u0027]/);
+                                                if (urlMatch && urlMatch[1]) {
+                                                    window.location.href = urlMatch[1];
+                                                    navigated = true;
+                                                }
+                                                if (!navigated) {
+                                                    var h2 = targetLi.querySelector("h2");
+                                                    if (h2) { h2.click(); navigated = true; }
+                                                }
+                                                if (!navigated) { targetLi.click(); }
+                                                found = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!found) {
+                                            console.log("【华医网小助手】未找到未学习或学习中课程，可能全部已完成");
+                                        }
+                                    } else {
+                                        console.log("【华医网小助手】课程状态为" + state + "，继续正常播放");
+                                    }
+                                }
+                            } catch(e) {
+                                console.log("【华医网小助手】刷新后状态检查出错: " + e);
+                            }
+                        }, 2000);
+                    }
+                })();
                 asynckillsendQuestion();//屏蔽课堂问答的函数；
                 killsendQuestion2();//屏蔽课堂问答的函数2；
 
@@ -253,8 +428,31 @@ document.addEventListener('DOMContentLoaded', function () {
                         if (qRightAnswer.hasOwnProperty(q)) { //当查询到记录了正确答案时的操作
 
                             //console.log("问题:"+ q + ",有答案:"+ qRightAnswer[q]);
-                            var rightSelection = findAnwser("tbody", index, qRightAnswer[q]) //返回答案选项label
-                            rightSelection.click();
+                            var rightSelection = findAnwser("tbody", index, qRightAnswer[q]); //返回答案选项label
+                            if (rightSelection) {
+                                rightSelection.click();
+                            } else {
+                                // 找不到匹配答案（可能题目文本已变化），回退到猜测模式
+                                console.log("已知答案匹配失败，回退猜测: " + q);
+                                if (questions.hasOwnProperty(q)) {
+                                    questions[q] = getNextChoice(questions[q]);
+                                } else {
+                                    questions[q] = "A";
+                                };
+                                var answer = getChoiceCode(questions[q]);
+                                var element = document.querySelectorAll("tbody")[index].getElementsByTagName("label")[answer];
+                                if (!element) {
+                                    console.log("找不到选项，选项更改为A index: " + index + " answer: " + answer);
+                                    questions[q] = "A";
+                                    answer = getChoiceCode("A");
+                                    element = document.querySelectorAll("tbody")[index].getElementsByTagName("label")[answer];
+                                };
+                                try {
+                                    var answerText = element.innerText.substring(3);
+                                    qTestAnswer[q] = answerText;
+                                } catch (error) { console.log("答案文本获取失败A：" + error); };
+                                element.click();
+                            };
 
                         } else {
                             if (questions.hasOwnProperty(q)) {
@@ -332,33 +530,54 @@ document.addEventListener('DOMContentLoaded', function () {
                 localStorage.removeItem(keyResult);//移除错题表缓存
                 if (res == "考试通过" || res == "考试通过！" || res == "完成项目学习可以申请学分了") { //考试通过
                     console.log("考试通过");
-                    //localStorage.setItem(keyResult, "");//记录最后一次答对的题目。
                     saveRightAnwser();//记录最后一次答对的题目。
                     SaveAllAnwser(); //存储所有记录的答案
                     cleanKeyStorage();//如果通过清理答案
 
-                    // var next = document.querySelector('input[class="state_lis_btn"][value="待考试"]');
-                    //if (next) {
+                    // 考试通过后：在结果页查找下一个待考试课程，通过其标题构造跳转
                     setTimeout(function () {
-                        var site = window.location.href;
-                        site = site.replace("pages/exam_result.aspx?cwid", "course_ware/course_ware_polyv.aspx?cwid");
-                        fetch(site)//测试原来的视频页是否存在
-                            .then(response => response ? window.location.href = site : window.location.href = site.replace("pages/exam_result.aspx?cwid", "course_ware/course_ware_cc.aspx?cwid"))
-                            .catch(error => console.error('考后回不到视频网址:', error));
-                        //next.click();
-                    }, 1000);//下一节课延时
-                    //};
+                        var found = false;
+                        // 考试结果页的结构：li.state_cour_lis > p.state_lis_text[title] + input.state_lis_btn[value]
+                        var courLis = document.querySelectorAll("li.state_cour_lis");
+                        for (var i = 0; i < courLis.length; i++) {
+                            var btn = courLis[i].querySelector('input.state_lis_btn');
+                            var status = btn ? btn.value : "";
+                            if (status === "待考试") {
+                                var titleEl = courLis[i].querySelector("p.state_lis_text");
+                                var title = titleEl ? (titleEl.getAttribute("title") || titleEl.innerText) : "";
+                                console.log("【华医网小助手】考试通过，找到待考试课程：" + title + "，返回课程列表自动进入");
+                                found = true;
+                                break;
+                            }
+                        }
+                        // 无论是否找到下一个待考试，都回到课程列表页让 auto-scan 处理
+                        // 因为结果页的按钮没有导航功能，需要回到课程页/列表页
+                        if (found) {
+                            console.log("【华医网小助手】返回课程列表页，自动扫描将处理下一课程");
+                        } else {
+                            console.log("【华医网小助手】未找到待考试课程，返回课程列表页");
+                        }
+                        // 直接导航到课程列表页（cme.aspx），脚本的 auto-scan 会自动找下一个待学习课程
+                        window.location.href = window.location.origin + "/pages/cme.aspx";
+                    }, 1000);
                 } else { //考试没过
                     console.log("考试未通过")
                     document.querySelector("p[class='tips_text']").innerText = "本次未通过，正在尝试更换答案\r\n（此为正常现象，脚本几秒后刷新，请勿操作）"
                     var qWrong = {};
                     for (var i = 0; i < dds.length; ++i) {
-                        if (!dds[i].querySelector("img").src.includes("bar_img")) {//这里表示否定
-                            qWrong[dds[i].querySelector("p").title.replace(/\s*/g, "")] = i
+                        var imgEl = dds[i].querySelector("img");
+                        var pEl = dds[i].querySelector("p");
+                        if (!imgEl || !pEl) continue;
+                        if (!imgEl.src.includes("bar_img")) {//这里表示否定
+                            // 与 doTest() 保持一致的文本提取：去掉前2字符（如"1、"）再移除空白
+                            var wrongQ = pEl.title;
+                            // title 可能包含"1、问题文本"格式，统一去掉前缀序号
+                            wrongQ = wrongQ.replace(/^\d+[、.，,]\s*/, "").replace(/\s*/g, "");
+                            qWrong[wrongQ] = i;
                         };
                     };
 
-                    if (qWrong != {}) {
+                    if (Object.keys(qWrong).length > 0) {
                         localStorage.setItem(keyResult, JSON.stringify(qWrong));
                         saveRightAnwser();
                         setTimeout(function () {
@@ -488,12 +707,32 @@ document.addEventListener('DOMContentLoaded', function () {
         };
     };
 
-    function clickexam() { //延时点击考试按钮。
-        console.log("已点击考试按钮");
+    function clickexam() { //延时点击考试按钮（先激活播放器再点，否则按钮不可点击）
+        console.log("准备进入考试，先激活播放器...");
+        // 华医网进入考试按钮需要播放器处于播放状态才可点击，先触发播放
+        try {
+            var video = document.querySelector("video");
+            if (video) {
+                video.muted = true;
+                video.volume = 0;
+                video.play().catch(function() {});
+            }
+            // polyv播放器
+            if (typeof player !== "undefined" && player && typeof player.j2s_resumeVideo === "function") {
+                player.j2s_resumeVideo();
+            }
+            // cc播放器
+            if (typeof cc_js_Player !== "undefined" && cc_js_Player && typeof cc_js_Player.play === "function") {
+                cc_js_Player.play().catch(function() {});
+            }
+        } catch(e) {
+            console.log("激活播放器失败: " + e);
+        }
+        // 等待播放器激活后点击考试按钮
         setTimeout(function () {
+            console.log("已点击考试按钮");
             document.querySelector("#jrks").click();
-        }, (Math.ceil(Math.random() * randomX)));
-        //}, (examTime + Math.ceil(Math.random() * randomX)));
+        }, (2000 + Math.ceil(Math.random() * 2000)));
     };
     // addSkipbtn / addratebtn 已移除 —— 倍速按钮已整合到 advis() 面板中
     var _speedCurrentRate = 1;
@@ -573,11 +812,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
         try {
             var hreftestEl = document.getElementById("jrks");
-            var topPlayEls = document.querySelectorAll("i[id='top_play']");
-            if (!hreftestEl || !topPlayEls.length) return; // DOM 未就绪，等待下次检测
+            if (!hreftestEl) return; // DOM 未就绪，等待下次检测
 
             var hreftest = hreftestEl.attributes["href"].value;
-            var state = topPlayEls[0].parentNode.nextElementSibling.nextElementSibling.nextElementSibling.innerText;
+            var state = getCurrentCourseState();
+            if (!state) return; // 无法获取状态，等待下次检测
 
             if (state == "已完成" || hreftest != "#" || (typeof getMaxPlayTime == "function" ? getMaxPlayTime() | 0 : 1) == (typeof player.j2s_getDuration == "function" ? player.j2s_getDuration() | 0 : 0) || (typeof getMaxPlayTime == "function" ? getMaxPlayTime() | 0 : 1) == (typeof player.getDuration == "function" ? player.getDuration() | 0 : 0)) {
                 // debounce：需要连续两次检测都确认"已完成"才触发（防止瞬时误判）
@@ -588,19 +827,29 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
                 _lastCompletedCheck = 0;
 
-                if (localStorage.getItem("华医mode") == "2" && state == "待考试") {
-                    console.log("mode=2,准备进入考试");
-                    courseFinished = true;
-                    sleep(5000);
-                    try {
-                        clickexam();
-                    } catch (error) {
-                        console.log("扫码进入考试");
-                        window.open("/pages/exam_tip.aspx?cwrid=" + cwrid, "_self");
+                if (localStorage.getItem("华医mode") == "2" && (state == "待考试" || (state == "已完成" && hreftest != "#"))) {
+                    // mode=2：检查侧边栏是否还有学习中/未学习课程
+                    // 如果有，优先完成学习；只有全部学完才进入考试
+                    if (hasRemainingCourses()) {
+                        console.log("mode=2,当前课程已完成，但还有未学完课程，跳转下一课程");
+                        courseFinished = true;
+                        if (clockms) { clearInterval(clockms); clockms = null; }
+                        playNext();
+                    } else {
+                        console.log("mode=2,所有课程已学完，准备进入考试");
+                        courseFinished = true;
+                        if (clockms) { clearInterval(clockms); clockms = null; }
+                        sleep(5000);
+                        try {
+                            clickexam();
+                        } catch (error) {
+                            console.log("扫码进入考试");
+                            window.open("/pages/exam_tip.aspx?cwrid=" + cwrid, "_self");
+                        };
                     };
                 } else {
                     if (localStorage.getItem("华医mode") == "2") {
-                        console.log("mode=2,本节课已完成");
+                        console.log("mode=2,本节课已完成且考试已通过");
                     } else {
                         console.log("mode=1,课程已学完，准备跳转下一课程 (clock)");
                         courseFinished = true;
@@ -679,25 +928,72 @@ document.addEventListener('DOMContentLoaded', function () {
                 console.log(err);
             };
             try {
-                var topPlay = document.querySelectorAll("i[id='top_play']");
-                if (!topPlay.length) return; // DOM 未就绪
-                var state = topPlay[0].parentNode.nextElementSibling.nextElementSibling.nextElementSibling.innerText;
+                var state = getCurrentCourseState();
+                if (!state) return; // DOM 未就绪，等待下次检测
                 if ($('video').prop('paused') == true && state != "已完成" && state != "待考试") {
                     console.log("视频意外暂停，恢复播放");
                     $('video').get(0).play().catch(function() {});
                     $('video').prop('volume', 0);
                     $('video').prop('muted', true);
-                } else if ((state == "已完成" || state == "待考试") && !inCooldown) {
-                    if (courseFinished) return; // 已在处理中，跳过重复触发
+                } else if (state == "待考试" && !inCooldown) {
+                    // 待考试：优先搜索学习中/未学习课程，找不到再进入考试
+                    if (courseFinished) return;
                     courseFinished = true;
                     clearInterval(clockms);
                     clockms = null;
-                    // 同时停掉 clock（examherftest）
                     if (clock) { clearInterval(clock); clock = null; }
                     try { document.querySelector("video").pause(); } catch(e) {}
-                    console.log("当前课程已学完，进入下一课程 (clockms)");
+                    console.log("【华医网小助手】当前课程状态为待考试，搜索学习中/未学习课程...");
+                    var lis = document.querySelectorAll("li.lis-inside-content");
+                    var foundLi = null;
+                    for (var n = 0; n < lis.length; n++) {
+                        var st = getCourseStatus(lis[n]);
+                        if (st === "未学习" || st === "学习中") {
+                            foundLi = lis[n];
+                            console.log("【华医网小助手】找到课程（" + st + "），开始学习");
+                            break;
+                        }
+                    }
+                    if (foundLi) {
+                        // 导航到找到的课程
+                        var navigated = false;
+                        var onclickAttr = foundLi.getAttribute("onclick") || "";
+                        var urlMatch = onclickAttr.match(/location\.href=['"]([^'"]+)['"]/);
+                        if (urlMatch && urlMatch[1]) {
+                            window.location.href = urlMatch[1];
+                            navigated = true;
+                        }
+                        if (!navigated) {
+                            var h2 = foundLi.querySelector("h2");
+                            if (h2) { h2.click(); navigated = true; }
+                        }
+                        if (!navigated) { foundLi.click(); }
+                        navCooldownUntil = Date.now() + 15000;
+                    } else {
+                        // 没有学习中/未学习课程，检查是否进入考试
+                        if (localStorage.getItem("华医mode") == "2") {
+                            console.log("【华医网小助手】无剩余可学课程，准备进入考试 (clockms)");
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            try { clickexam(); }
+                            catch (error) {
+                                console.log("扫码进入考试");
+                                window.open("/pages/exam_tip.aspx?cwrid=" + (typeof cwrid !== "undefined" ? cwrid : ""), "_self");
+                            };
+                        } else {
+                            console.log("【华医网小助手】单刷模式，全部课程已完成 (clockms)");
+                        }
+                    }
+                } else if (state == "已完成" && !inCooldown) {
+                    if (courseFinished) return;
+                    courseFinished = true;
+                    clearInterval(clockms);
+                    clockms = null;
+                    if (clock) { clearInterval(clock); clock = null; }
+                    try { document.querySelector("video").pause(); } catch(e) {}
+                    sessionStorage.setItem("hua_yi_post_refresh", "1");
+                    console.log("【华医网小助手】课程已完成，3秒后刷新页面检查状态");
                     await new Promise(resolve => setTimeout(resolve, 3000));
-                    playNext();
+                    location.reload();
                 };
             } catch (err) {
                 // DOM 变动中，静默忽略
@@ -867,6 +1163,66 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     };
 
+    // 获取侧边栏课程项的状态文本（待考试/学习中/未学习/已完成等）
+    function getCourseStatus(li) {
+        try {
+            var btn = li.querySelector("button");
+            return btn ? btn.innerText.trim() : "";
+        } catch(e) { return ""; }
+    }
+
+    // 判断侧边栏中是否还有未完成学习的课程（学习中或未学习）
+    // 注意：视频页侧边栏可能没有状态按钮，此时保守处理——假设有剩余课程
+    function hasRemainingCourses() {
+        var lis = document.querySelectorAll("li.lis-inside-content");
+        var foundLearning = false;
+        var unknownCount = 0;
+        var totalCount = lis.length;
+        for (var i = 0; i < totalCount; i++) {
+            var status = getCourseStatus(lis[i]);
+            if (status === "学习中" || status === "未学习") {
+                foundLearning = true;
+            } else if (status === "" || status === "未知") {
+                unknownCount++;
+            }
+        }
+        if (foundLearning) return true;
+        // 如果所有课程状态都读取不到（侧边栏无按钮），保守假设有剩余课程需要学习
+        if (unknownCount === totalCount && totalCount > 0) {
+            console.log("hasRemainingCourses: 无法读取课程状态，假设有剩余课程");
+            return true;
+        }
+        return false;
+    }
+
+    // 获取当前正在播放的课程 li 元素（通过 current-playing class）
+    function getCurrentCourseLi() {
+        var cur = document.querySelector("li.lis-inside-content.current-playing");
+        if (!cur) {
+            // 回退：通过 top_play 图标定位
+            var topPlay = document.querySelector("i[id='top_play']");
+            if (topPlay) {
+                var li = topPlay.closest("li.lis-inside-content");
+                if (li) return li;
+            }
+        }
+        return cur;
+    }
+
+    // 获取当前课程的状态文本（优先使用 current-playing class，回退 DOM 遍历）
+    function getCurrentCourseState() {
+        var li = getCurrentCourseLi();
+        if (li) return getCourseStatus(li);
+        // 最后的回退：旧的 DOM 遍历方式
+        try {
+            var topPlay = document.querySelectorAll("i[id='top_play']");
+            if (topPlay.length) {
+                return topPlay[0].parentNode.nextElementSibling.nextElementSibling.nextElementSibling.innerText;
+            }
+        } catch(e) {}
+        return "";
+    }
+
     var playNextRunning = false; // 防止并发调用
     async function playNext() {
         if (playNextRunning) {
@@ -882,30 +1238,69 @@ document.addEventListener('DOMContentLoaded', function () {
 
         try {
             //自动播放下一个视频的逻辑
-            const targetElements = document.querySelectorAll("i[id='top_play']");
-            if (targetElements.length === 0) {
-                console.log("未找到当前播放位置标记，尝试按钮方式跳转");
+            var currentLi = getCurrentCourseLi();
+            if (!currentLi) {
+                console.log("未找到当前播放课程，尝试按钮方式跳转");
                 fallbackToNextCourse();
                 return;
             }
-            const parentElement = targetElements[0].parentElement;
-            const grandparentElement = parentElement.parentElement;
-
-            const lis = document.querySelectorAll("li[class='lis-inside-content']");
-            var index = Array.from(lis).findIndex(li => li === grandparentElement);//找出当前页面是第几个课程
+            const lis = document.querySelectorAll("li.lis-inside-content");
+            var index = Array.from(lis).findIndex(function(li) { return li === currentLi; });//找出当前页面是第几个课程
             console.log("当前视频索引: " + index + ", 总课程数: " + lis.length);
             // 修复：index 为 -1 时说明找不到当前元素，应走 fallback
-            if (index >= 0 && index + 2 <= lis.length) {
-                index += 2;
-                console.log("跳转到第 " + index + " 个课程");
-                document.querySelector("#top_body > div.video-container > div.page-container > div.page-content > ul > li:nth-child(" + index + ") > h2").click();
-                setTimeout(function () {
-                    try {
-                        document.evaluate("//button[contains(., '知道了')]", document, null, XPathResult.ANY_TYPE).iterateNext().click();
-                    } catch (err) {
-                        console.log("未找到弹窗");
-                    };
-                }, 2000);
+            if (index >= 0 && index + 1 < lis.length) {
+                // 模式2（视频+考试）：从当前位置向后扫描，跳过"待考试"/"已完成"课程
+                // 优先完成所有学习任务，最后统一考试
+                var isMode2 = localStorage.getItem("华医mode") == "2";
+                var nextIdx = -1;
+                for (var k = index + 1; k < lis.length; k++) {
+                    var st = getCourseStatus(lis[k]);
+                    if (isMode2 && (st === "待考试" || st === "已完成")) {
+                        console.log("mode=2: 跳过第" + (k+1) + "个课程（状态:" + st + "）");
+                        continue;
+                    }
+                    nextIdx = k;
+                    break;
+                }
+                if (nextIdx >= 0) {
+                    index = nextIdx;
+                    console.log("跳转到第 " + (index + 1) + " 个课程");
+                    // 优先使用 li 元素的 onclick 跳转（提取 href 直接跳转更可靠）
+                    var targetLi = lis[index];
+                    var navigated = false;
+                    // 方式1: 从 onclick 属性提取 url 直接跳转
+                    var onclickAttr = targetLi.getAttribute("onclick") || "";
+                    var urlMatch = onclickAttr.match(/location\.href=['"]([^'"]+)['"]/);
+                    if (urlMatch && urlMatch[1]) {
+                        console.log("通过 onclick 提取 URL 跳转: " + urlMatch[1]);
+                        window.location.href = urlMatch[1];
+                        navigated = true;
+                    }
+                    if (!navigated) {
+                        // 方式2: 尝试点击 h2（兼容旧版）
+                        var h2 = targetLi.querySelector("h2");
+                        if (h2) {
+                            console.log("通过点击 h2 跳转");
+                            h2.click();
+                            navigated = true;
+                        }
+                    }
+                    if (!navigated) {
+                        // 方式3: 直接点击 li
+                        console.log("通过点击 li 跳转");
+                        targetLi.click();
+                    }
+                    setTimeout(function () {
+                        try {
+                            document.evaluate("//button[contains(., '知道了')]", document, null, XPathResult.ANY_TYPE).iterateNext().click();
+                        } catch (err) {
+                            console.log("未找到弹窗");
+                        };
+                    }, 2000);
+                } else {
+                    console.log("侧边栏剩余课程均为待考试/已完成，尝试进入考试");
+                    fallbackToNextCourse();
+                }
             } else {
                 console.log("侧边栏已无更多视频（index=" + index + "），尝试跳转到下一课程");
                 fallbackToNextCourse();
@@ -920,18 +1315,31 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     };    // 从 playNext 中抽出的 fallback 逻辑：查找并点击未学习/学习中/待考试的课程
     function fallbackToNextCourse() {
-        if ($('button:contains("未学习")').length > 0) {
-            console.log("找到未学习课程，开始学习");
-            $('button:contains("未学习")').siblings().eq(0).click();
-        } else if ($('button:contains("学习中")').length > 0) {
-            console.log("找到学习中课程，继续学习");
-            $('button:contains("学习中")').siblings().eq(0).click();
-        } else if ($('button:contains("待考试")').length > 0 && localStorage.getItem("华医mode") == "2") {
-            console.log("找到待考试课程，进入考试");
-            $('button:contains("待考试")').siblings().eq(0).click();
-        } else {
+        // 严格按优先级查找，排除"已完成"
+        var allBtns = document.querySelectorAll('button, input[type="button"]');
+        var found = false;
+        // 优先级：未学习 > 学习中 > 待考试(mode2)
+        var mode = localStorage.getItem("华医mode");
+        var priorities = ['未学习', '学习中'];
+        if (mode == '2') priorities.push('待考试');
+        for (var p = 0; p < priorities.length && !found; p++) {
+            for (var b = 0; b < allBtns.length; b++) {
+                var val = allBtns[b].value || allBtns[b].textContent || '';
+                if (val.trim() === priorities[p]) {
+                    console.log("找到" + priorities[p] + "课程，开始学习");
+                    // 点击按钮的兄弟链接
+                    var sib = allBtns[b].parentElement.querySelector('a[href]');
+                    if (!sib) sib = allBtns[b].previousElementSibling || allBtns[b].nextElementSibling;
+                    if (sib && sib.tagName === 'A') { sib.click(); }
+                    else { allBtns[b].click(); }
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (!found) {
             console.log('没有找到任何待处理按钮，可能全部已完成');
-                        if (clock) { clearInterval(clock); clock = null; }
+            if (clock) { clearInterval(clock); clock = null; }
             if (clockms) { clearInterval(clockms); clockms = null; }
         }
     }
@@ -1021,8 +1429,8 @@ document.addEventListener('DOMContentLoaded', function () {
         for (var i = 0; i < allElements.length; i++) {
             var el = allElements[i];
             var text = (el.textContent || el.value || el.innerText || '').trim();
-            // 精确匹配 "未学习"（排除包含其他文字的干扰）
-            if (text === '未学习' || text.indexOf('未学习') === 0) {
+            // 精确匹配，并且排除"已完成"
+            if ((text === '未学习' || text.indexOf('未学习') === 0) && text.indexOf('已完成') === -1) {
                 if (tryClickCourse(el, '找到【未学习】课程')) {
                     clicked = true;
                     break;
@@ -1036,8 +1444,8 @@ document.addEventListener('DOMContentLoaded', function () {
             var allElems = document.querySelectorAll('*');
             for (var j = 0; j < allElems.length; j++) {
                 var elem = allElems[j];
-                // 只在叶子节点（无子元素）查找，避免重复匹配
-                if (elem.children.length === 0) {
+                // 只在叶子节点且不包含"已完成"的节点查找
+                if (elem.children.length === 0 && (elem.textContent || '').indexOf('已完成') === -1) {
                     var txt = elem.textContent || '';
                     var match = txt.match(/播放至[：:]\s*(\d+)\s*%/);
                     if (match) {
@@ -1059,7 +1467,7 @@ document.addEventListener('DOMContentLoaded', function () {
             for (var k = 0; k < allElements.length; k++) {
                 var el2 = allElements[k];
                 var text2 = (el2.textContent || el2.value || '').trim();
-                if (text2 === '学习中' || text2.indexOf('学习中') === 0) {
+                if (text2 === '学习中' && text2.indexOf('已完成') === -1) {
                     if (tryClickCourse(el2, '找到【学习中】课程')) {
                         clicked = true;
                         break;
@@ -1068,23 +1476,18 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         }
 
-        // ========== 第4优先级：查找"待考试"的课程（仅在视频+考试模式下） ==========
+        // ========== 第4优先级：查找"待考试"的课程 ==========
         if (!clicked) {
-            var mode = localStorage.getItem("华医mode");
-            if (mode == 2) {
-                console.log("  → 查找【待考试】课程（视频+考试模式）...");
-                for (var l = 0; l < allElements.length; l++) {
-                    var el3 = allElements[l];
-                    var text3 = (el3.textContent || el3.value || '').trim();
-                    if (text3 === '待考试' || text3.indexOf('待考试') === 0) {
-                        if (tryClickCourse(el3, '找到【待考试】课程')) {
-                            clicked = true;
-                            break;
-                        }
+            console.log("  → 查找【待考试】课程...");
+            for (var l = 0; l < allElements.length; l++) {
+                var el3 = allElements[l];
+                var text3 = (el3.textContent || el3.value || '').trim();
+                if (text3 === '待考试' && text3.indexOf('已完成') === -1) {
+                    if (tryClickCourse(el3, '找到【待考试】课程')) {
+                        clicked = true;
+                        break;
                     }
                 }
-            } else {
-                console.log("  → 跳过【待考试】（当前为单刷视频模式）");
             }
         }
 
@@ -1108,7 +1511,8 @@ document.addEventListener('DOMContentLoaded', function () {
             for (var n = 0; n < statusBtns.length; n++) {
                 var btnText = (statusBtns[n].textContent || statusBtns[n].value || '').trim();
                 // 排除"已完成"
-                if (btnText && btnText !== '已完成' && btnText.indexOf('已完成') === -1) {
+                // 严格排除"已完成"（部分按钮可能包含"已完成"子串）
+                if (btnText && btnText !== '已完成' && btnText.indexOf('已完成') === -1 && btnText.indexOf('完成') === -1) {
                     if (tryClickCourse(statusBtns[n], '宽松匹配到课程（状态：' + btnText + '）')) {
                         clicked = true;
                         break;
