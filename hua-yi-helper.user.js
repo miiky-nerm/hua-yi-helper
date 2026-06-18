@@ -47,18 +47,42 @@ var newupdate = "2026.6.10 新增暂停刷新跳转功能：视频暂停后等3�
 // 必须在页面脚本注册click监听器之前拦截
 // ═══════════════════════════════════════════
 (function () {
+    // 【核心修复0】最早时机：保存原始 console 方法，防止页面脚本覆盖
+    var _rawConsole = {};
+    try {
+        _rawConsole.log = console.log.bind(console);
+        _rawConsole.warn = console.warn.bind(console);
+        _rawConsole.error = console.error.bind(console);
+    } catch(e) {}
+    // 保存原始 console 对象的引用（必须在 defineProperty 之前）
+    var _origConsole = window.console;
+    // 阻止页面覆盖 console
+    try {
+        Object.defineProperty(window, 'console', {
+            get: function() { return _origConsole; },
+            set: function() {},
+            configurable: false
+        });
+    } catch(e) {}
+    // 用安全封装替代全局 console.log
+    var _safeLog = function() {
+        try { _rawConsole.log.apply(null, arguments); } catch(e) {}
+    };
+    window.__huaYiLog = _safeLog;  // 暴露给后续代码使用
+    window.__rawConsole = _rawConsole;  // 暴露原始 console 方法供恢复
+
     // 【核心修复】最早时机：在页面任何脚本执行前，立即将 blockAbnormalPlugin 覆盖为空函数
     // 这是最关键的一步，必须在页面定义/调用它之前完成
     try {
         window.blockAbnormalPlugin = function() {};
-        console.log('【华医网小助手】已抢先覆盖 blockAbnormalPlugin');
+        _safeLog('【华医网小助手】已抢先覆盖 blockAbnormalPlugin');
     } catch(e) {}
 
     // 【核心修复】拦截 Object.defineProperty，防止页面用不可配置方式重新定义 blockAbnormalPlugin
     var _origDefineProperty = Object.defineProperty;
     Object.defineProperty = function(obj, prop, descriptor) {
         if (obj === window && prop === 'blockAbnormalPlugin') {
-            console.log('【华医网小助手】已拦截 blockAbnormalPlugin 的 Object.defineProperty 重定义');
+            _safeLog('【华医网小助手】已拦截 blockAbnormalPlugin 的 Object.defineProperty 重定义');
             return window;
         }
         return _origDefineProperty.apply(this, arguments);
@@ -69,29 +93,55 @@ var newupdate = "2026.6.10 新增暂停刷新跳转功能：视频暂停后等3�
     EventTarget.prototype.addEventListener = function (type, listener, options) {
         // 拦截 contextmenu 事件监听，防止考试页面禁用右键
         if (type === 'contextmenu') {
-            console.log('【华医网小助手】已拦截右键屏蔽监听器');
+            _safeLog('【华医网小助手】已拦截右键屏蔽监听器');
             return;
         }
         if (this === document && type === 'click') {
             var listenerStr = String(listener);
             // 扩大拦截：只要是检查 isTrusted 的 click 监听器都拦截（不限于 blockAbnormalPlugin）
             if (listenerStr.indexOf('isTrusted') !== -1) {
-                console.log('【华医网小助手】已拦截反脚本点击检测监听器');
+                _safeLog('【华医网小助手】已拦截反脚本点击检测监听器');
                 return;
             }
         }
         return _origAddEventListener.call(this, type, listener, options);
     };
 
-    // 拦截 setInterval：阻止倍速检测定时器
+    // 拦截 setInterval：阻止倍速检测定时器 + 修复 queryIsAuth 泄漏
+    var _faceIntervals = {};  // 追踪 face.aspx 页面 queryIsAuth 定时器
     var _origSetInterval = window.setInterval;
     window.setInterval = function (callback, delay) {
         var cbStr = String(callback);
         if (cbStr.indexOf('blockAbnormalPlugin') !== -1 && cbStr.indexOf('ratePlayLimitNum') !== -1) {
-            console.log('【华医网小助手】已拦截倍速检测定时器');
+            _safeLog('【华医网小助手】已拦截倍速检测定时器');
             return 0;
         }
-        return _origSetInterval.apply(this, arguments);
+        var id = _origSetInterval.apply(this, arguments);
+        // 自动管理 queryIsAuth 定时器：每次新建前清理旧定时器，防止泄漏
+        if (cbStr.indexOf('queryIsAuth') !== -1) {
+            var keys = Object.keys(_faceIntervals);
+            for (var k = 0; k < keys.length; k++) {
+                clearInterval(_faceIntervals[keys[k]]);
+                delete _faceIntervals[keys[k]];
+            }
+            _faceIntervals[id] = id;
+        }
+        return id;
+    };
+
+    // 代理 clearInterval：修复页面 clearInterval(queryIsAuth) 传入函数引用无效的 bug
+    var _origClearInterval = window.clearInterval;
+    window.clearInterval = function(id) {
+        if (typeof id === 'function' && id.name === 'queryIsAuth') {
+            var keys = Object.keys(_faceIntervals);
+            for (var k = 0; k < keys.length; k++) {
+                _origClearInterval(_faceIntervals[keys[k]]);
+                delete _faceIntervals[keys[k]];
+            }
+            return;
+        }
+        if (_faceIntervals[id]) { delete _faceIntervals[id]; }
+        return _origClearInterval.call(this, id);
     };
 
     // 【新增】拦截 setTimeout：同样可能有反脚本检测延时器
@@ -99,7 +149,7 @@ var newupdate = "2026.6.10 新增暂停刷新跳转功能：视频暂停后等3�
     window.setTimeout = function (callback, delay) {
         var cbStr = String(callback);
         if (cbStr.indexOf('blockAbnormalPlugin') !== -1) {
-            console.log('【华医网小助手】已拦截反脚本 setTimeout');
+            _safeLog('【华医网小助手】已拦截反脚本 setTimeout');
             return 0;
         }
         return _origSetTimeout.apply(this, arguments);
@@ -128,9 +178,39 @@ var newupdate = "2026.6.10 新增暂停刷新跳转功能：视频暂停后等3�
 })();
 
 // Wait for DOM ready since @run-at document-start
-document.addEventListener('DOMContentLoaded', function () {
+function __hyInit__() {
 (function () {
     'use strict';
+
+    // 【存活证明】在页面左上角注入一个不可见的标记，证明脚本已注入
+    try {
+        var _indicator = document.createElement('div');
+        _indicator.id = '__huayi_helper_loaded__';
+        _indicator.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;overflow:hidden;z-index:-1;';
+        if (document.body) document.body.appendChild(_indicator);
+    } catch(e) {}
+
+    // 【恢复 console】页面脚本（hyjquery.min.js）可能覆盖了 console.log
+    // 直接通过 Object.defineProperty 强制覆盖，绕过只读限制
+    try {
+        if (window.__rawConsole) {
+            Object.defineProperty(console, 'log', { value: window.__rawConsole.log, writable: true, configurable: true });
+            Object.defineProperty(console, 'warn', { value: window.__rawConsole.warn, writable: true, configurable: true });
+            Object.defineProperty(console, 'error', { value: window.__rawConsole.error, writable: true, configurable: true });
+            console.info = window.__rawConsole.log;  // 备用：页面通常不会覆盖 info
+        }
+    } catch(e) {}
+    // 同时写入页面可见标记，证明脚本已执行
+    try {
+        if (document.body) {
+            var _dbg = document.createElement('div');
+            _dbg.id = '__hy_dbg__';
+            _dbg.textContent = '华医助手已加载';
+            _dbg.style.cssText = 'position:fixed;bottom:2px;right:2px;font-size:10px;color:#4cb0f9;z-index:99999;opacity:0.8;pointer-events:none;';
+            document.body.appendChild(_dbg);
+            setTimeout(function() { var el = document.getElementById('__hy_dbg__'); if (el) el.remove(); }, 5000);
+        }
+    } catch(e) {}
 
     // 清除页面内联的右键/复制/帮助限制（考试页面会设置这些属性）
     (function cleanupBodyRestrictions() {
@@ -179,8 +259,12 @@ document.addEventListener('DOMContentLoaded', function () {
     var _lastCompletedCheck = 0; // debounce：连续两次读到"已完成"才真正触发
 
     advis();
-    document.querySelector("[id='tixing']").innerHTML = "当前网址已适配ヾ(๑╹◡╹)ﾉ&quot<br>失效请赞赏联系&nbsp&nbspε(┬┬﹏┬┬)3";
-    if (urlTip == "course_ware_polyv.aspx") { //保利威播放器视频页面
+    var tixingEl = document.querySelector("[id='tixing']");
+    if (tixingEl) tixingEl.innerHTML = "当前网址已适配ヾ(๑╹◡╹)ﾉ&quot<br>失效请赞赏联系&nbsp&nbspε(┬┬﹏┬┬)3";
+    if (urlTip == "face.aspx") { //刷脸认证页面
+        console.log("当前任务: 刷脸认证");
+        huayi.faceAuth();
+    } else if (urlTip == "course_ware_polyv.aspx") { //保利威播放器视频页面
         console.log("当前任务: 华医看视频");
         document.querySelector("div[id='Div1']").style.top = "40px";
         huayi.seeVideo(1);
@@ -225,7 +309,9 @@ document.addEventListener('DOMContentLoaded', function () {
         huayi.courseList();
     } else if (urlTip == "exam_result.aspx") { //考试结果页面
         console.log("当前任务: 华医考试结果审核");
-        huayi.doResult();
+        ensurePageScripts(function() {
+            huayi.doResult();
+        });
     } else {
         console.log("其它情况");
         var urlInf = window.location.href.split("/");
@@ -237,7 +323,8 @@ document.addEventListener('DOMContentLoaded', function () {
             }, 15000); // 15秒后刷新，确保状态已更新
         } else {
             try {
-                document.querySelector("[id='tixing']").innerHTML = "此页面非视频、考试或未适配<br>失效请赞赏联系&nbsp&nbspε(┬┬﹏┬┬)3";
+                var tixingEl2 = document.querySelector("[id='tixing']");
+                if (tixingEl2) tixingEl2.innerHTML = "此页面非视频、考试或未适配<br>失效请赞赏联系&nbsp&nbspε(┬┬﹏┬┬)3";
             } catch (error) { };
         };
     };
@@ -522,6 +609,24 @@ document.addEventListener('DOMContentLoaded', function () {
                 };
                 ///专用函数区结束
             },
+            faceAuth: function () {
+                console.log("【华医网小助手】刷脸认证页面，确保脚本加载...");
+                ensurePageScripts(function() {
+                    // 监听页面 QR 码状态，自动处理过期刷新
+                    setTimeout(function() {
+                        var refreshEl = document.getElementById('refresh');
+                        var saoRefresh = document.getElementById('sao_refresh');
+                        if (saoRefresh && saoRefresh.style.display !== 'none' && refreshEl) {
+                            console.log('【华医网小助手】检测到二维码已过期，自动刷新...');
+                            refreshEl.click();
+                        }
+                    }, 10000);
+
+                    console.log('【华医网小助手】刷脸认证页面修复完成');
+                    var tixingEl = document.querySelector("[id='tixing']");
+                    if (tixingEl) tixingEl.innerHTML = "刷脸认证页面<br>请使用掌上华医扫码";
+                });
+            },
             doResult: function () {
                 //var res = document.getElementsByTagName("b")[0].innerText;
                 //var dds = document.getElementsByTagName("dd");
@@ -593,6 +698,53 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     //---------------------------------全局函数区------------------------------//
+    // 通用：确保页面依赖脚本（jQuery / layer.js）已加载，失败则重新注入或刷新
+    function ensurePageScripts(onReady, retryCount) {
+        retryCount = retryCount || 0;
+        if (retryCount > 3) {
+            console.log("【华医网小助手】脚本加载重试超过3次，刷新页面...");
+            setTimeout(function() { location.reload(); }, 2000);
+            return;
+        }
+
+        function injectScript(src, onload, onerror) {
+            var s = document.createElement('script');
+            s.src = src;
+            s.onload = onload;
+            s.onerror = onerror;
+            document.head.appendChild(s);
+        }
+
+        // 检查 jQuery
+        if (typeof $ === 'undefined') {
+            console.log("【华医网小助手】jQuery 未加载，动态注入 (重试" + retryCount + ")...");
+            injectScript('/scripts/hyjquery.min.js', function() {
+                console.log("【华医网小助手】jQuery 注入成功");
+                ensurePageScripts(onReady, 0); // 重置计数，继续检查 layer
+            }, function() {
+                console.log("【华医网小助手】jQuery 注入失败，重试...");
+                setTimeout(function() { ensurePageScripts(onReady, retryCount + 1); }, 1500);
+            });
+            return;
+        }
+
+        // 检查 layer.js
+        if (typeof layer === 'undefined') {
+            console.log("【华医网小助手】layer.js 未加载，动态注入 (重试" + retryCount + ")...");
+            injectScript('/scripts/layer/layer.js', function() {
+                console.log("【华医网小助手】layer.js 注入成功");
+                onReady();
+            }, function() {
+                console.log("【华医网小助手】layer.js 注入失败，重试...");
+                setTimeout(function() { ensurePageScripts(onReady, retryCount + 1); }, 1500);
+            });
+            return;
+        }
+
+        // 都已就绪
+        onReady();
+    }
+
     //答案记录函数区开始//
     function SaveAllAnwser() {//保存历史题目答案
         var qAllAnswer = JSON.parse(localStorage.getItem(keyAllAnswer)) || {};
@@ -1032,7 +1184,7 @@ document.addEventListener('DOMContentLoaded', function () {
             justify-content: space-between;
             align-items: center;
         ">
-            <span>华医网小助手 v`+ GM_info['script']['version'] + `</span>
+            <span>华医网小助手 v`+ (typeof GM_info !== 'undefined' ? GM_info['script']['version'] : '2.0.2') + `</span>
             <span id='clo' style="cursor:pointer;font-size:18px;line-height:1;opacity:0.85;" title="关闭面板">×</span>
         </div>
         <div style="padding: 14px 16px;">
@@ -1540,5 +1692,11 @@ document.addEventListener('DOMContentLoaded', function () {
     //---------------------------------全局函数区end------------------------------//
 
 })()
-}); // DOMContentLoaded wrapper;
 // DOMContentLoaded wrapper end
+}
+// 根据 readyState 决定立即执行还是等待 DOMContentLoaded
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', __hyInit__);
+} else {
+    __hyInit__();
+}
